@@ -26,6 +26,8 @@ class Woo_LN_Escrow_Plugin {
         add_filter( 'dokan_get_dashboard_nav', array( $this, 'add_escrow_nav' ) );
         add_action( 'dokan_load_custom_template', array( $this, 'load_escrow_template' ) );
         add_filter( 'woocommerce_my_account_my_orders_actions', array( $this, 'add_view_escrow_action' ), 10, 2 );
+        add_action( 'wp_ajax_woo_ln_escrow_status', array( $this, 'ajax_update_status' ) );
+        add_action( 'wp_ajax_nopriv_woo_ln_escrow_status', array( $this, 'ajax_update_status' ) );
     }
 
     public function add_settings_page() {
@@ -106,10 +108,24 @@ class Woo_LN_Escrow_Plugin {
             foreach ( $orders as $order ) {
                 $order_id = $order->get_id();
                 $status   = get_post_meta( $order_id, self::META_STATUS, true );
+                $escrow_id = get_post_meta( $order_id, self::META_ESCROW_ID, true );
+                $api_url = get_option( self::OPTION_API_URL );
+                if ( $escrow_id && $api_url ) {
+                    $resp = wp_remote_get( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id );
+                    if ( ! is_wp_error( $resp ) ) {
+                        $data = json_decode( wp_remote_retrieve_body( $resp ), true );
+                        if ( $data && isset( $data['status'] ) ) {
+                            $status = sanitize_text_field( $data['status'] );
+                            update_post_meta( $order_id, self::META_STATUS, $status );
+                        }
+                    }
+                }
                 echo '<tr><td>#' . esc_html( $order_id ) . '</td><td>' . esc_html( $status ) . '</td><td>';
-                echo '<form method="post" style="display:inline"><input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
-                submit_button( __( 'Mark Shipped', 'woo-ln-escrow' ), 'primary', 'confirm_escrow', false );
-                echo '</form> ';
+                if ( 'awaiting_shipment' === $status ) {
+                    echo '<form method="post" style="display:inline"><input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
+                    submit_button( __( 'Mark Shipped', 'woo-ln-escrow' ), 'primary', 'confirm_escrow', false );
+                    echo '</form> ';
+                }
                 echo '<form method="post" style="display:inline"><input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
                 echo '<input type="text" name="reason" placeholder="' . esc_attr__( 'Reason', 'woo-ln-escrow' ) . '" />';
                 submit_button( __( 'Raise Dispute', 'woo-ln-escrow' ), 'secondary', 'dispute_escrow', false );
@@ -182,7 +198,7 @@ class Woo_LN_Escrow_Plugin {
         }
         update_post_meta( $order_id, self::META_ESCROW_ID, sanitize_text_field( $data['hash'] ) );
         update_post_meta( $order_id, self::META_TOKEN, sanitize_text_field( $data['token'] ) );
-        update_post_meta( $order_id, self::META_STATUS, 'pending' );
+        update_post_meta( $order_id, self::META_STATUS, 'pending_payment' );
         if ( isset( $data['qr'] ) ) {
             update_post_meta( $order_id, self::META_QR, $data['qr'] );
         }
@@ -212,19 +228,27 @@ class Woo_LN_Escrow_Plugin {
         if ( $qr && $escrow_id && $api_url ) {
             echo '<h2>' . esc_html__( 'Pay with Lightning', 'woo-ln-escrow' ) . '</h2>';
             echo '<img id="woo-ln-escrow-qr" src="' . esc_attr( $qr ) . '" alt="Lightning Invoice" />';
-            echo '<p id="woo-ln-escrow-status">' . esc_html__( 'Status: pending', 'woo-ln-escrow' ) . '</p>';
+            echo '<p id="woo-ln-escrow-status">' . esc_html__( 'Status: pending_payment', 'woo-ln-escrow' ) . '</p>';
             $endpoint = esc_url_raw( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id );
+            $ajax = esc_url_raw( admin_url( 'admin-ajax.php' ) );
             echo '<script>
             (function(){
                 var s=document.getElementById("woo-ln-escrow-status");
                 var img=document.getElementById("woo-ln-escrow-qr");
+                var current="pending_payment";
+                var orderId=' . intval( $order_id ) . ';
+                var ajaxurl="' . esc_js( $ajax ) . '";
+                async function updateMeta(st){
+                    try{await fetch(ajaxurl,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=woo_ln_escrow_status&order_id="+orderId+"&status="+encodeURIComponent(st)});}catch(e){}
+                }
                 async function poll(){
                     try{
                         const r=await fetch("' . esc_js( $endpoint ) . '");
                         if(!r.ok) return;
                         const d=await r.json();
                         s.textContent="Status: "+d.status;
-                        if(d.status!=="pending"){ if(img) img.style.display="none"; clearInterval(i); }
+                        if(d.status!==current){current=d.status;updateMeta(d.status);}
+                        if(d.status!=="pending_payment"){ if(img) img.style.display="none"; clearInterval(i); }
                     }catch(e){}
                 }
                 var i=setInterval(poll,5000);
@@ -232,6 +256,16 @@ class Woo_LN_Escrow_Plugin {
             })();
             </script>';
         }
+    }
+
+    public function ajax_update_status() {
+        $order_id = isset( $_POST['order_id'] ) ? intval( $_POST['order_id'] ) : 0;
+        $status   = isset( $_POST['status'] ) ? sanitize_text_field( $_POST['status'] ) : '';
+        if ( ! $order_id || ! $status ) {
+            wp_send_json_error();
+        }
+        update_post_meta( $order_id, self::META_STATUS, $status );
+        wp_send_json_success();
     }
 
 }
@@ -314,7 +348,7 @@ class Woo_LN_Escrow_Gateway extends WC_Payment_Gateway {
 
         update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_ESCROW_ID, sanitize_text_field( $data['hash'] ) );
         update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_TOKEN, sanitize_text_field( $data['token'] ) );
-        update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_STATUS, 'pending' );
+        update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_STATUS, 'pending_payment' );
         if ( isset( $data['qr'] ) ) {
             update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_QR, $data['qr'] );
         }

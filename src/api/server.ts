@@ -1,7 +1,7 @@
 import express from 'express';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
-import { createHoldInvoice, settleHoldInvoice, cancelHoldInvoice, payRequest } from '../../ln';
+import { createHoldInvoice, settleHoldInvoice, cancelHoldInvoice, payRequest, getInvoice } from '../../ln';
 import Token from '../../models/token';
 import Escrow, { IEscrow } from '../../models/escrow';
 import { logger } from '../../logger';
@@ -94,10 +94,25 @@ app.post('/api/escrow', async (req, res) => {
 // Retrieve escrow status
 app.get('/api/escrow/:id', async (req, res) => {
   try {
-    const escrow = await Escrow.findOne({ hash: req.params.id }).lean<IEscrow>();
-    if (!escrow) {
+    const escrowDoc = await Escrow.findOne({ hash: req.params.id });
+    if (!escrowDoc) {
       return res.status(404).json({ error: 'unknown escrow' });
     }
+
+    if (escrowDoc.status === 'pending_payment') {
+      try {
+        const invoice = await getInvoice({ hash: escrowDoc.hash });
+        if (invoice && invoice.is_held) {
+          escrowDoc.status = 'awaiting_shipment';
+          await escrowDoc.save();
+          imageCache.removeInvoiceQR(escrowDoc.hash);
+        }
+      } catch (e) {
+        logger.error(`Failed to fetch invoice for ${escrowDoc.hash}: ${e}`);
+      }
+    }
+
+    const escrow = escrowDoc.toObject();
     const response: {
       hash: string;
       status: IEscrow['status'];
@@ -110,10 +125,12 @@ app.get('/api/escrow/:id', async (req, res) => {
       amount: escrow.amount,
       sellerAddress: escrow.sellerAddress,
     };
-    if (escrow.status === 'pending') {
+
+    if (escrow.status === 'pending_payment') {
       const qr = imageCache.getInvoiceQR(escrow.hash);
       if (qr) response.qr = qr;
     }
+
     res.json(response);
   } catch (err) {
     res.status(500).json({ error: 'internal error' });
@@ -135,6 +152,9 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
     const escrow = await Escrow.findOne({ hash: req.params.id });
     if (!escrow || !escrow.secret) {
       return res.status(404).json({ error: 'unknown escrow' });
+    }
+    if (escrow.status !== 'awaiting_shipment') {
+      return res.status(400).json({ error: 'invalid state' });
     }
 
     await settleHoldInvoice({ secret: escrow.secret });
@@ -171,6 +191,9 @@ app.post('/api/escrow/:id/cancel', async (req, res) => {
     const escrow = await Escrow.findOne({ hash: req.params.id });
     if (!escrow) {
       return res.status(404).json({ error: 'unknown escrow' });
+    }
+    if (escrow.status === 'settled') {
+      return res.status(400).json({ error: 'already settled' });
     }
 
     await cancelHoldInvoice({ hash: req.params.id });

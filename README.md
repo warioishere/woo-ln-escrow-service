@@ -32,6 +32,8 @@ API endpoints:
 
 Expired authentication tokens are cleaned up automatically each hour. When a token expires, the service cancels the associated hold invoice and marks the escrow as cancelled.
 
+Escrow statuses progress from `pending_payment` while waiting for buyer funding, to `awaiting_shipment` after the hold invoice is paid, and finally to `settled`, `cancelled`, or `disputed`.
+
 **LNp2pBot** is being developed on nodejs and connects with an LND node, we wanted that the telegram bot be able to receive lightning payments without being custodial, after some thinking we decided to use hold invoices for it, the bot only settle seller invoices when each party is ok with it and right after that moment the bot pays the buyer's invoice.
 
 ## Creating a sell order
