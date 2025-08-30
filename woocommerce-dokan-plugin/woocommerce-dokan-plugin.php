@@ -19,6 +19,8 @@ class Woo_LN_Escrow_Plugin {
     const META_LIGHTNING_ADDRESS = '_woo_ln_lightning_address';
     const META_STATUS = '_woo_ln_escrow_status';
 
+    private $poll_orders = array();
+
     public function __construct() {
         add_action( 'admin_menu', array( $this, 'add_settings_page' ) );
         add_action( 'admin_init', array( $this, 'register_settings' ) );
@@ -27,6 +29,7 @@ class Woo_LN_Escrow_Plugin {
         add_filter( 'dokan_get_dashboard_nav', array( $this, 'add_escrow_nav' ) );
         add_action( 'dokan_load_custom_template', array( $this, 'load_escrow_template' ) );
         add_filter( 'woocommerce_my_account_my_orders_actions', array( $this, 'add_escrow_actions' ), 10, 2 );
+        add_action( 'woocommerce_after_account_orders', array( $this, 'print_poll_script' ) );
         add_action( 'template_redirect', array( $this, 'maybe_release_escrow' ) );
         add_action( 'wp_ajax_woo_ln_escrow_status', array( $this, 'ajax_update_status' ) );
         add_action( 'wp_ajax_nopriv_woo_ln_escrow_status', array( $this, 'ajax_update_status' ) );
@@ -198,6 +201,11 @@ class Woo_LN_Escrow_Plugin {
         $api_url   = get_option( self::OPTION_API_URL );
 
         if ( $escrow_id && $token && $api_url ) {
+            $this->poll_orders[] = array(
+                'orderId'  => $order->get_id(),
+                'escrowId' => $escrow_id,
+                'status'   => $status,
+            );
             $view_url = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $escrow_id ) . '/manage';
             $view_url = add_query_arg( 'token', rawurlencode( $token ), $view_url );
             $actions['view_escrow'] = array(
@@ -228,6 +236,20 @@ class Woo_LN_Escrow_Plugin {
         }
         update_post_meta( $order_id, self::META_STATUS, $status );
         wp_send_json_success();
+    }
+
+    public function print_poll_script() {
+        if ( empty( $this->poll_orders ) ) {
+            return;
+        }
+        $api_url  = trailingslashit( get_option( self::OPTION_API_URL ) );
+        $ajax_url = admin_url( 'admin-ajax.php' );
+        echo '<script type="text/javascript">';
+        echo 'const wooLnEscrowOrders = ' . wp_json_encode( $this->poll_orders ) . ';';
+        echo 'const wooLnApi = ' . wp_json_encode( $api_url ) . ';';
+        echo 'const wooLnAjax = ' . wp_json_encode( $ajax_url ) . ';';
+        echo 'function wooLnPoll(){wooLnEscrowOrders.forEach(o=>{fetch(wooLnApi+"api/escrow/"+o.escrowId).then(r=>r.json()).then(d=>{if(!d.status||d.status===o.status)return;fetch(wooLnAjax,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=woo_ln_escrow_status&order_id="+encodeURIComponent(o.orderId)+"&status="+encodeURIComponent(d.status)});o.status=d.status;if(d.status==="awaiting_release"){location.reload();}});});}setInterval(wooLnPoll,10000);wooLnPoll();';
+        echo '</script>';
     }
 
     public function maybe_release_escrow() {
