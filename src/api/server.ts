@@ -78,9 +78,17 @@ app.get('/escrow/:id/manage', async (req, res) => {
   const host = `${req.protocol}://${req.get('host')}`;
   const manageUrl = `${host}/escrow/${escrow.hash}/manage?token=${token}`;
   const qr = imageCache.getInvoiceQR(escrow.hash);
+  const actions =
+    record.type === 'seller'
+      ? `<button onclick="ship()">Mark Shipped</button><button onclick="dispute()">Raise Dispute</button>`
+      : `<button onclick="release()">Release Funds</button><button onclick="dispute()">Raise Dispute</button>`;
+  const scripts =
+    record.type === 'seller'
+      ? `function ship(){post('/api/escrow/${escrow.hash}/ship',{token:'${token}'}).then(r=>alert(JSON.stringify(r))).catch(()=>alert('error'));}`
+      : `function release(){post('/api/escrow/${escrow.hash}/confirm',{token:'${token}'}).then(r=>alert(JSON.stringify(r))).catch(()=>alert('error'));}`;
   res.send(`<!DOCTYPE html><html><head><title>Manage Escrow ${escrow.hash}</title></head><body><h1>Manage Escrow ${escrow.hash}</h1><p><strong>Save this link</strong> to manage your escrow later: <a href="${manageUrl}">${manageUrl}</a></p><p>Status: ${escrow.status}</p><p>Amount: ${escrow.amount} sats</p><p>Seller: ${escrow.sellerAddress}</p>${
     qr ? `<img src="${qr}" alt="invoice QR" />` : ''
-  }<div><button onclick="release()">Release Funds</button><button onclick="dispute()">Raise Dispute</button></div><script>function post(path,data){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json());}function release(){post('/api/escrow/${escrow.hash}/confirm',{token:'${token}'}).then(r=>alert(JSON.stringify(r))).catch(()=>alert('error'));}function dispute(){var reason=prompt('Reason for dispute?');if(!reason)return;post('/api/escrow/${escrow.hash}/dispute',{token:'${token}',reason}).then(r=>alert(JSON.stringify(r))).catch(()=>alert('error'));}</script></body></html>`);
+  }<div>${actions}</div><script>function post(path,data){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json());}${scripts}function dispute(){var reason=prompt('Reason for dispute?');if(!reason)return;post('/api/escrow/${escrow.hash}/dispute',{token:'${token}',reason}).then(r=>alert(JSON.stringify(r))).catch(()=>alert('error'));}</script></body></html>`);
 });
 
 // Create a new hold invoice for a WooCommerce order
@@ -98,10 +106,13 @@ app.post('/api/escrow', async (req, res) => {
 
     const { request, hash, secret } = invoice;
 
-    const token = crypto.randomBytes(16).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const buyerToken = crypto.randomBytes(16).toString('hex');
+    const sellerToken = crypto.randomBytes(16).toString('hex');
+    const buyerHash = crypto.createHash('sha256').update(buyerToken).digest('hex');
+    const sellerHash = crypto.createHash('sha256').update(sellerToken).digest('hex');
     const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
-    await Token.create({ escrowId: hash, tokenHash, expiresAt });
+    await Token.create({ escrowId: hash, tokenHash: buyerHash, type: 'buyer', expiresAt });
+    await Token.create({ escrowId: hash, tokenHash: sellerHash, type: 'seller', expiresAt });
     await Escrow.create({ hash, sellerAddress, amount, description, secret });
 
     let qr = imageCache.getInvoiceQR(hash);
@@ -110,7 +121,7 @@ app.post('/api/escrow', async (req, res) => {
       imageCache.storeInvoiceQR(hash, qr);
     }
 
-    res.json({ hash, request, qr, token });
+    res.json({ hash, request, qr, buyerToken, sellerToken });
   } catch (err) {
     res.status(500).json({ error: 'internal error' });
   }
@@ -170,7 +181,7 @@ app.post('/api/escrow/:id/ship', async (req, res) => {
       return res.status(400).json({ error: 'token required' });
     }
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const record = await Token.findOne({ escrowId: req.params.id, tokenHash });
+    const record = await Token.findOne({ escrowId: req.params.id, tokenHash, type: 'seller' });
     if (!record || record.expiresAt.getTime() < Date.now()) {
       return res.status(403).json({ error: 'invalid token' });
     }
@@ -197,7 +208,7 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
       return res.status(400).json({ error: 'token required' });
     }
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const record = await Token.findOne({ escrowId: req.params.id, tokenHash });
+    const record = await Token.findOne({ escrowId: req.params.id, tokenHash, type: 'buyer' });
     if (!record || record.expiresAt.getTime() < Date.now()) {
       return res.status(403).json({ error: 'invalid token' });
     }
@@ -226,7 +237,7 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
     }
 
     imageCache.removeInvoiceQR(req.params.id);
-    await record.deleteOne();
+    await Token.deleteMany({ escrowId: req.params.id });
     escrow.status = 'settled';
     escrow.secret = null;
     await escrow.save();
@@ -259,7 +270,7 @@ app.post('/api/escrow/:id/cancel', async (req, res) => {
 
     await cancelHoldInvoice({ hash: req.params.id });
     imageCache.removeInvoiceQR(req.params.id);
-    await record.deleteOne();
+    await Token.deleteMany({ escrowId: req.params.id });
     escrow.status = 'cancelled';
     escrow.secret = null;
     await escrow.save();

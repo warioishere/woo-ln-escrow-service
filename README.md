@@ -24,11 +24,12 @@ The project includes an Express-powered escrow API with a minimal web interface.
 
 API endpoints:
 
-- `POST /api/escrow` – create a hold invoice
+- `POST /api/escrow` – create a hold invoice and return separate buyer and seller tokens
 - `GET /api/escrow/:id` – check status, seller address, amount and QR data
 - `GET /escrow/:id?token=TOKEN` – status page showing payment details and a link to manage the escrow; instruct users to save the URL
-- `GET /escrow/:id/manage?token=TOKEN` – token-protected page to release or dispute an escrow
-- `POST /api/escrow/:id/confirm` – release funds to the seller (resolves Lightning addresses to BOLT11 invoices via LNURL-Pay)
+- `GET /escrow/:id/manage?token=TOKEN` – token-protected page. Buyer tokens show release/dispute options; seller tokens show ship/dispute options
+- `POST /api/escrow/:id/ship` – mark goods as shipped, moving escrow to `awaiting_release` (seller token required)
+- `POST /api/escrow/:id/confirm` – release funds to the seller (buyer token required; resolves Lightning addresses to BOLT11 invoices via LNURL-Pay)
 - `POST /api/escrow/:id/cancel` – refund the buyer
 - `POST /api/escrow/:id/dispute` – mark an escrow as disputed
 - `POST /api/escrow/:id/resolve` – admin resolution of a dispute

@@ -13,7 +13,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Woo_LN_Escrow_Plugin {
     const OPTION_API_URL = 'woo_ln_escrow_api_url';
     const META_ESCROW_ID = '_woo_ln_escrow_id';
-    const META_TOKEN = '_woo_ln_escrow_token';
+    const META_BUYER_TOKEN = '_woo_ln_escrow_buyer_token';
+    const META_SELLER_TOKEN = '_woo_ln_escrow_seller_token';
     const META_QR = '_woo_ln_escrow_qr';
     const META_LIGHTNING_ADDRESS = '_woo_ln_lightning_address';
     const META_STATUS = '_woo_ln_escrow_status';
@@ -141,7 +142,7 @@ class Woo_LN_Escrow_Plugin {
 
     private function process_confirm( $order_id ) {
         $escrow_id = get_post_meta( $order_id, self::META_ESCROW_ID, true );
-        $token     = get_post_meta( $order_id, self::META_TOKEN, true );
+        $token     = get_post_meta( $order_id, self::META_BUYER_TOKEN, true );
         $api_url   = get_option( self::OPTION_API_URL );
         if ( ! $escrow_id || ! $token || ! $api_url ) {
             return;
@@ -158,7 +159,7 @@ class Woo_LN_Escrow_Plugin {
 
     private function process_ship( $order_id ) {
         $escrow_id = get_post_meta( $order_id, self::META_ESCROW_ID, true );
-        $token     = get_post_meta( $order_id, self::META_TOKEN, true );
+        $token     = get_post_meta( $order_id, self::META_SELLER_TOKEN, true );
         $api_url   = get_option( self::OPTION_API_URL );
         if ( ! $escrow_id || ! $token || ! $api_url ) {
             return;
@@ -175,7 +176,7 @@ class Woo_LN_Escrow_Plugin {
 
     private function process_dispute( $order_id, $reason ) {
         $escrow_id = get_post_meta( $order_id, self::META_ESCROW_ID, true );
-        $token     = get_post_meta( $order_id, self::META_TOKEN, true );
+        $token     = get_post_meta( $order_id, self::META_SELLER_TOKEN, true );
         $api_url   = get_option( self::OPTION_API_URL );
         if ( ! $escrow_id || ! $token || ! $api_url ) {
             return;
@@ -192,7 +193,7 @@ class Woo_LN_Escrow_Plugin {
 
     public function add_escrow_actions( $actions, $order ) {
         $escrow_id = get_post_meta( $order->get_id(), self::META_ESCROW_ID, true );
-        $token     = get_post_meta( $order->get_id(), self::META_TOKEN, true );
+        $token     = get_post_meta( $order->get_id(), self::META_BUYER_TOKEN, true );
         $status    = get_post_meta( $order->get_id(), self::META_STATUS, true );
         $api_url   = get_option( self::OPTION_API_URL );
 
@@ -313,21 +314,26 @@ class Woo_LN_Escrow_Gateway extends WC_Payment_Gateway {
         }
 
         $data = json_decode( wp_remote_retrieve_body( $response ), true );
-        if ( ! $data || empty( $data['hash'] ) || empty( $data['token'] ) ) {
+        if ( ! $data || empty( $data['hash'] ) || empty( $data['buyerToken'] ) || empty( $data['sellerToken'] ) ) {
             wc_add_notice( __( 'Invalid escrow response.', 'woo-ln-escrow' ), 'error' );
             return;
         }
 
         update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_ESCROW_ID, sanitize_text_field( $data['hash'] ) );
-        update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_TOKEN, sanitize_text_field( $data['token'] ) );
+        if ( isset( $data['buyerToken'] ) ) {
+            update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_BUYER_TOKEN, sanitize_text_field( $data['buyerToken'] ) );
+        }
+        if ( isset( $data['sellerToken'] ) ) {
+            update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_SELLER_TOKEN, sanitize_text_field( $data['sellerToken'] ) );
+        }
         update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_STATUS, 'pending_payment' );
         if ( isset( $data['qr'] ) ) {
             update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_QR, $data['qr'] );
         }
 
         $redirect = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $data['hash'] );
-        if ( ! empty( $data['token'] ) ) {
-            $redirect .= '?token=' . rawurlencode( $data['token'] );
+        if ( ! empty( $data['buyerToken'] ) ) {
+            $redirect .= '?token=' . rawurlencode( $data['buyerToken'] );
         }
 
         return array(
