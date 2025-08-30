@@ -49,8 +49,11 @@ app.get('/', async (_req, res) => {
 app.get('/escrow/:id', async (req, res) => {
   const escrow = await Escrow.findOne({ hash: req.params.id }).lean();
   if (!escrow) return res.status(404).send('Escrow not found');
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
   const qr = imageCache.getInvoiceQR(escrow.hash);
-  res.send(`<!DOCTYPE html><html><head><title>Escrow ${escrow.hash}</title></head><body><h1>${escrow.description}</h1><p>Status: ${escrow.status}</p><p>Amount: ${escrow.amount} sats</p><p>Seller: ${escrow.sellerAddress}</p>${
+  res.send(`<!DOCTYPE html><html><head><title>Escrow ${escrow.hash}</title></head><body><h1>${escrow.description}</h1>${
+    token ? `<p><strong>Token:</strong> ${token}</p>` : ''
+  }<p>Status: ${escrow.status}</p><p>Amount: ${escrow.amount} sats</p><p>Seller: ${escrow.sellerAddress}</p>${
     qr ? `<img src="${qr}" alt="invoice QR" />` : ''
   }</body></html>`);
 });
