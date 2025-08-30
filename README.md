@@ -19,6 +19,15 @@ The project includes an Express-powered escrow API with a minimal web interface.
 
 - `ESCROW_DOMAIN`: hostname the server binds to (default `0.0.0.0`)
 - `ESCROW_PORT`: port number the server listens on (default `3000`)
+- `ESCROW_ADMIN_TOKEN`: shared secret used to authorize dispute resolution
+
+API endpoints:
+
+- `POST /api/escrow` – create a hold invoice
+- `POST /api/escrow/:id/confirm` – release funds to the seller
+- `POST /api/escrow/:id/cancel` – refund the buyer
+- `POST /api/escrow/:id/dispute` – mark an escrow as disputed
+- `POST /api/escrow/:id/resolve` – admin resolution of a dispute
 
 **LNp2pBot** is being developed on nodejs and connects with an LND node, we wanted that the telegram bot be able to receive lightning payments without being custodial, after some thinking we decided to use hold invoices for it, the bot only settle seller invoices when each party is ok with it and right after that moment the bot pays the buyer's invoice.
 

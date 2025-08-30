@@ -129,6 +129,68 @@ app.post('/api/escrow/:id/cancel', async (req, res) => {
   }
 });
 
+// Raise a dispute on an escrow
+app.post('/api/escrow/:id/dispute', async (req, res) => {
+  try {
+    const { token, reason } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'token required' });
+    }
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const record = await Token.findOne({ escrowId: req.params.id, tokenHash });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(403).json({ error: 'invalid token' });
+    }
+    const escrow = await Escrow.findOne({ hash: req.params.id });
+    if (!escrow) {
+      return res.status(404).json({ error: 'unknown escrow' });
+    }
+    escrow.status = 'disputed';
+    escrow.dispute = { reason };
+    await escrow.save();
+    res.json({ status: 'disputed' });
+  } catch (err) {
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// Resolve a dispute (admin only)
+app.post('/api/escrow/:id/resolve', async (req, res) => {
+  try {
+    const { adminToken, action } = req.body;
+    if (!adminToken || adminToken !== process.env.ESCROW_ADMIN_TOKEN) {
+      return res.status(403).json({ error: 'unauthorized' });
+    }
+    const escrow = await Escrow.findOne({ hash: req.params.id });
+    if (!escrow || !escrow.secret) {
+      return res.status(404).json({ error: 'unknown escrow' });
+    }
+    const record = await Token.findOne({ escrowId: req.params.id });
+    if (action === 'release') {
+      await settleHoldInvoice({ secret: escrow.secret });
+      const payment = await payRequest({ request: escrow.sellerAddress, amount: escrow.amount });
+      if (!payment || (typeof payment === 'object' && 'error' in payment)) {
+        return res.status(500).json({ error: 'payment failed' });
+      }
+      escrow.status = 'settled';
+    } else if (action === 'refund') {
+      await cancelHoldInvoice({ hash: req.params.id });
+      escrow.status = 'cancelled';
+    } else {
+      return res.status(400).json({ error: 'invalid action' });
+    }
+    imageCache.removeInvoiceQR(req.params.id);
+    if (record) await record.deleteOne();
+    escrow.secret = null;
+    escrow.dispute = undefined;
+    await escrow.save();
+    logger.info(`Escrow ${req.params.id} resolved as ${escrow.status}`);
+    res.json({ status: escrow.status });
+  } catch (err) {
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
 const port = Number(process.env.ESCROW_PORT || 3000);
 const domain = process.env.ESCROW_DOMAIN || '0.0.0.0';
 app.listen(port, domain, () => console.log(`Escrow API listening at http://${domain}:${port}`));
