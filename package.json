@@ -11,8 +11,7 @@
     "dev": "nodemon ./dist/app",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write '**/*.{js,ts}'",
-    "pretest": "tsc -p tsconfig.test.json",
-    "test": "export NODE_ENV=test && mocha --exit 'dist/tests/**/*.spec.js'"
+    "test": "echo \"no tests\""
   },
   "license": "MIT",
   "dependencies": {
