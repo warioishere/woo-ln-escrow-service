@@ -197,7 +197,7 @@ class Woo_LN_Escrow_Plugin {
         $api_url   = get_option( self::OPTION_API_URL );
 
         if ( $escrow_id && $token && $api_url ) {
-            $view_url = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $escrow_id );
+            $view_url = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $escrow_id ) . '/manage';
             $view_url = add_query_arg( 'token', rawurlencode( $token ), $view_url );
             $actions['view_escrow'] = array(
                 'url'  => esc_url( $view_url ),

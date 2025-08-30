@@ -26,6 +26,7 @@ API endpoints:
 
 - `POST /api/escrow` – create a hold invoice
 - `GET /api/escrow/:id` – check status, seller address, amount and QR data
+- `GET /escrow/:id?token=TOKEN` – status page showing payment details and a link to manage the escrow; instruct users to save the URL
 - `GET /escrow/:id/manage?token=TOKEN` – token-protected page to release or dispute an escrow
 - `POST /api/escrow/:id/confirm` – release funds to the seller (resolves Lightning addresses to BOLT11 invoices via LNURL-Pay)
 - `POST /api/escrow/:id/cancel` – refund the buyer

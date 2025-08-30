@@ -54,8 +54,12 @@ app.get('/escrow/:id', async (req, res) => {
   if (!escrow) return res.status(404).send('Escrow not found');
   const token = typeof req.query.token === 'string' ? req.query.token : '';
   const qr = imageCache.getInvoiceQR(escrow.hash);
+  const host = `${req.protocol}://${req.get('host')}`;
+  const manageUrl = token ? `${host}/escrow/${escrow.hash}/manage?token=${token}` : '';
   res.send(`<!DOCTYPE html><html><head><title>Escrow ${escrow.hash}</title></head><body><h1>${escrow.description}</h1>${
-    token ? `<p><strong>Token:</strong> ${token}</p>` : ''
+    token
+      ? `<p><strong>Token:</strong> ${token}</p><p><strong>Save this link</strong> to manage your escrow later: <a href="${manageUrl}">${manageUrl}</a></p>`
+      : ''
   }<p>Status: ${escrow.status}</p><p>Amount: ${escrow.amount} sats</p><p>Seller: ${escrow.sellerAddress}</p>${
     qr ? `<img src="${qr}" alt="invoice QR" />` : ''
   }</body></html>`);
