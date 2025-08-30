@@ -24,6 +24,7 @@ class Woo_LN_Escrow_Plugin {
         add_filter( 'dokan_seller_meta_fields', array( $this, 'add_vendor_lightning_field' ) );
         add_action( 'dokan_process_seller_meta_fields', array( $this, 'save_vendor_lightning_field' ), 10, 2 );
         add_action( 'admin_menu', array( $this, 'add_release_page' ) );
+        add_filter( 'woocommerce_my_account_my_orders_actions', array( $this, 'add_view_escrow_action' ), 10, 2 );
     }
 
     public function add_settings_page() {
@@ -89,12 +90,29 @@ class Woo_LN_Escrow_Plugin {
         if ( ! $data ) {
             return;
         }
-        update_post_meta( $order_id, self::META_ESCROW_ID, $data['hash'] );
-        update_post_meta( $order_id, self::META_TOKEN, $data['token'] );
+        update_post_meta( $order_id, self::META_ESCROW_ID, sanitize_text_field( $data['hash'] ) );
+        update_post_meta( $order_id, self::META_TOKEN, sanitize_text_field( $data['token'] ) );
         update_post_meta( $order_id, self::META_STATUS, 'pending' );
         if ( isset( $data['qr'] ) ) {
             update_post_meta( $order_id, self::META_QR, $data['qr'] );
         }
+    }
+
+    public function add_view_escrow_action( $actions, $order ) {
+        $escrow_id = get_post_meta( $order->get_id(), self::META_ESCROW_ID, true );
+        $token     = get_post_meta( $order->get_id(), self::META_TOKEN, true );
+        $api_url   = get_option( self::OPTION_API_URL );
+
+        if ( $escrow_id && $token && $api_url ) {
+            $url = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $escrow_id );
+            $url = add_query_arg( 'token', rawurlencode( $token ), $url );
+            $actions['view_escrow'] = array(
+                'url'  => esc_url( $url ),
+                'name' => __( 'View Escrow', 'woo-ln-escrow' ),
+            );
+        }
+
+        return $actions;
     }
 
     public function display_qr_on_thankyou( $order_id ) {
