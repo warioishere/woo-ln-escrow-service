@@ -5,6 +5,7 @@ export interface IEscrow extends Document {
   sellerAddress: string;
   amount: number;
   description: string;
+  secret: string | null;
   status: 'pending' | 'settled' | 'cancelled';
   createdAt: Date;
   updatedAt: Date;
@@ -15,6 +16,7 @@ const escrowSchema = new Schema<IEscrow>({
   sellerAddress: { type: String, required: true },
   amount: { type: Number, required: true },
   description: { type: String, required: true },
+  secret: { type: String, default: null },
   status: {
     type: String,
     enum: ['pending', 'settled', 'cancelled'],

@@ -14,9 +14,6 @@ imageCache.initialize().catch(() => undefined);
 const app = express();
 app.use(express.json());
 
-// simple in-memory store for invoice secrets
-const secrets = new Map<string, string>();
-
 // basic web views
 app.get('/', async (_req, res) => {
   const escrows = await Escrow.find().sort({ createdAt: -1 }).lean();
@@ -48,13 +45,12 @@ app.post('/api/escrow', async (req, res) => {
     }
 
     const { request, hash, secret } = invoice;
-    secrets.set(hash, secret);
 
     const token = crypto.randomBytes(16).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await Token.create({ escrowId: hash, tokenHash, expiresAt });
-    await Escrow.create({ hash, sellerAddress, amount, description });
+    await Escrow.create({ hash, sellerAddress, amount, description, secret });
 
     let qr = imageCache.getInvoiceQR(hash);
     if (!qr) {
@@ -80,28 +76,22 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
     if (!record || record.expiresAt.getTime() < Date.now()) {
       return res.status(403).json({ error: 'invalid token' });
     }
-
-    const secret = secrets.get(req.params.id);
-    if (!secret) {
-      return res.status(404).json({ error: 'unknown invoice' });
-    }
-
     const escrow = await Escrow.findOne({ hash: req.params.id });
-    if (!escrow) {
+    if (!escrow || !escrow.secret) {
       return res.status(404).json({ error: 'unknown escrow' });
     }
 
-    await settleHoldInvoice({ secret });
+    await settleHoldInvoice({ secret: escrow.secret });
 
     const payment = await payRequest({ request: escrow.sellerAddress, amount: escrow.amount });
     if (!payment || (typeof payment === 'object' && 'error' in payment)) {
       return res.status(500).json({ error: 'payment failed' });
     }
 
-    secrets.delete(req.params.id);
     imageCache.removeInvoiceQR(req.params.id);
     await record.deleteOne();
     escrow.status = 'settled';
+    escrow.secret = null;
     await escrow.save();
     logger.info(`Escrow ${req.params.id} settled to ${escrow.sellerAddress}`);
     res.json({ status: 'settled' });
@@ -122,12 +112,17 @@ app.post('/api/escrow/:id/cancel', async (req, res) => {
     if (!record || record.expiresAt.getTime() < Date.now()) {
       return res.status(403).json({ error: 'invalid token' });
     }
+    const escrow = await Escrow.findOne({ hash: req.params.id });
+    if (!escrow) {
+      return res.status(404).json({ error: 'unknown escrow' });
+    }
 
     await cancelHoldInvoice({ hash: req.params.id });
-    secrets.delete(req.params.id);
     imageCache.removeInvoiceQR(req.params.id);
     await record.deleteOne();
-    await Escrow.updateOne({ hash: req.params.id }, { status: 'cancelled' });
+    escrow.status = 'cancelled';
+    escrow.secret = null;
+    await escrow.save();
     res.json({ status: 'cancelled' });
   } catch (err) {
     res.status(500).json({ error: 'internal error' });
