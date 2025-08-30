@@ -1,6 +1,11 @@
 import express from 'express';
 import QRCode from 'qrcode';
+import crypto from 'crypto';
 import { createHoldInvoice, settleHoldInvoice, cancelHoldInvoice } from '../../ln';
+import Token from '../../models/token';
+import { connect } from '../../db_connect';
+
+connect();
 
 const app = express();
 app.use(express.json());
@@ -23,9 +28,15 @@ app.post('/api/escrow', async (req, res) => {
 
     const { request, hash, secret } = invoice;
     secrets.set(hash, secret);
+
+    const token = crypto.randomBytes(16).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await Token.create({ escrowId: hash, tokenHash, expiresAt });
+
     const qr = await QRCode.toDataURL(request);
 
-    res.json({ hash, request, qr });
+    res.json({ hash, request, qr, token });
   } catch (err) {
     res.status(500).json({ error: 'internal error' });
   }
@@ -34,12 +45,24 @@ app.post('/api/escrow', async (req, res) => {
 // Settle a previously created hold invoice
 app.post('/api/escrow/:id/confirm', async (req, res) => {
   try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'token required' });
+    }
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const record = await Token.findOne({ escrowId: req.params.id, tokenHash });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(403).json({ error: 'invalid token' });
+    }
+
     const secret = secrets.get(req.params.id);
     if (!secret) {
       return res.status(404).json({ error: 'unknown invoice' });
     }
+
     await settleHoldInvoice({ secret });
     secrets.delete(req.params.id);
+    await record.deleteOne();
     res.json({ status: 'settled' });
   } catch (err) {
     res.status(500).json({ error: 'internal error' });
@@ -49,8 +72,19 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
 // Cancel an existing hold invoice
 app.post('/api/escrow/:id/cancel', async (req, res) => {
   try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'token required' });
+    }
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const record = await Token.findOne({ escrowId: req.params.id, tokenHash });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(403).json({ error: 'invalid token' });
+    }
+
     await cancelHoldInvoice({ hash: req.params.id });
     secrets.delete(req.params.id);
+    await record.deleteOne();
     res.json({ status: 'cancelled' });
   } catch (err) {
     res.status(500).json({ error: 'internal error' });
