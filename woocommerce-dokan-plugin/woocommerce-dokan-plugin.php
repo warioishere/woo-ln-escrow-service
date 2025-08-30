@@ -173,38 +173,6 @@ class Woo_LN_Escrow_Plugin {
         }
     }
 
-    public function create_escrow_invoice( $order_id, $posted_data, $order ) {
-        $seller_id = $order->get_meta( '_dokan_vendor_id' );
-        $lightning_address = get_user_meta( $seller_id, self::META_LIGHTNING_ADDRESS, true );
-        $api_url = get_option( self::OPTION_API_URL );
-        if ( ! $api_url || ! $lightning_address ) {
-            return;
-        }
-        $body = array(
-            'description'   => 'Order #' . $order_id,
-            'amount'        => $order->get_total(),
-            'sellerAddress' => $lightning_address,
-        );
-        $response = wp_remote_post( trailingslashit( $api_url ) . 'api/escrow', array(
-            'headers' => array( 'Content-Type' => 'application/json' ),
-            'body'    => wp_json_encode( $body ),
-            'timeout' => 45,
-        ) );
-        if ( is_wp_error( $response ) ) {
-            return;
-        }
-        $data = json_decode( wp_remote_retrieve_body( $response ), true );
-        if ( ! $data ) {
-            return;
-        }
-        update_post_meta( $order_id, self::META_ESCROW_ID, sanitize_text_field( $data['hash'] ) );
-        update_post_meta( $order_id, self::META_TOKEN, sanitize_text_field( $data['token'] ) );
-        update_post_meta( $order_id, self::META_STATUS, 'pending_payment' );
-        if ( isset( $data['qr'] ) ) {
-            update_post_meta( $order_id, self::META_QR, $data['qr'] );
-        }
-    }
-
     public function add_escrow_actions( $actions, $order ) {
         $escrow_id = get_post_meta( $order->get_id(), self::META_ESCROW_ID, true );
         $token     = get_post_meta( $order->get_id(), self::META_TOKEN, true );
@@ -232,43 +200,6 @@ class Woo_LN_Escrow_Plugin {
         }
 
         return $actions;
-    }
-
-    public function display_qr_on_thankyou( $order_id ) {
-        $qr         = get_post_meta( $order_id, self::META_QR, true );
-        $escrow_id  = get_post_meta( $order_id, self::META_ESCROW_ID, true );
-        $api_url    = get_option( self::OPTION_API_URL );
-        if ( $qr && $escrow_id && $api_url ) {
-            echo '<h2>' . esc_html__( 'Pay with Lightning', 'woo-ln-escrow' ) . '</h2>';
-            echo '<img id="woo-ln-escrow-qr" src="' . esc_attr( $qr ) . '" alt="Lightning Invoice" />';
-            echo '<p id="woo-ln-escrow-status">' . esc_html__( 'Status: pending_payment', 'woo-ln-escrow' ) . '</p>';
-            $endpoint = esc_url_raw( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id );
-            $ajax = esc_url_raw( admin_url( 'admin-ajax.php' ) );
-            echo '<script>
-            (function(){
-                var s=document.getElementById("woo-ln-escrow-status");
-                var img=document.getElementById("woo-ln-escrow-qr");
-                var current="pending_payment";
-                var orderId=' . intval( $order_id ) . ';
-                var ajaxurl="' . esc_js( $ajax ) . '";
-                async function updateMeta(st){
-                    try{await fetch(ajaxurl,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=woo_ln_escrow_status&order_id="+orderId+"&status="+encodeURIComponent(st)});}catch(e){}
-                }
-                async function poll(){
-                    try{
-                        const r=await fetch("' . esc_js( $endpoint ) . '");
-                        if(!r.ok) return;
-                        const d=await r.json();
-                        s.textContent="Status: "+d.status;
-                        if(d.status!==current){current=d.status;updateMeta(d.status);}
-                        if(d.status!=="pending_payment"){ if(img) img.style.display="none"; clearInterval(i); }
-                    }catch(e){}
-                }
-                var i=setInterval(poll,5000);
-                poll();
-            })();
-            </script>';
-        }
     }
 
     public function ajax_update_status() {
