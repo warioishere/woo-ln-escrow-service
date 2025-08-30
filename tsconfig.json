@@ -17,6 +17,7 @@
     "lnurl/**/*",
     "models/**/*",
     "util/**/*",
+    "src/**/*",
     "locales/**/*",
   ],
   "exclude": ["node_modules", "dist", "tests", "locales"]

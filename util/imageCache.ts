@@ -6,6 +6,7 @@ const fs = require('fs').promises;
 interface ImageCache {
   honeybadgerImage: string | null;
   regularImages: string[];
+  invoiceQRCodes: Map<string, string>;
   isInitialized: boolean;
 }
 
@@ -13,6 +14,7 @@ class ImageCacheManager {
   private cache: ImageCache = {
     honeybadgerImage: null,
     regularImages: [],
+    invoiceQRCodes: new Map(),
     isInitialized: false
   };
 
@@ -112,6 +114,18 @@ class ImageCacheManager {
       regularImagesCount: this.cache.regularImages.length,
       isInitialized: this.cache.isInitialized
     };
+  }
+
+  storeInvoiceQR(id: string, dataUrl: string): void {
+    this.cache.invoiceQRCodes.set(id, dataUrl);
+  }
+
+  getInvoiceQR(id: string): string | undefined {
+    return this.cache.invoiceQRCodes.get(id);
+  }
+
+  removeInvoiceQR(id: string): void {
+    this.cache.invoiceQRCodes.delete(id);
   }
 }
 

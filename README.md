@@ -13,6 +13,31 @@ Wherever you are you can start using the [bot](https://t.me/lnp2pbot), just need
 
 ---
 
+## Escrow web server
+
+The project includes an Express-powered escrow API with a minimal web interface. Configure its network settings with the following environment variables:
+
+- `ESCROW_DOMAIN`: hostname the server binds to (default `0.0.0.0`)
+- `ESCROW_PORT`: port number the server listens on (default `3000`)
+- `ESCROW_ADMIN_TOKEN`: shared secret used to authorize dispute resolution
+- `ESCROW_TOKEN_TTL`: authentication token lifetime in milliseconds (default `604800000` – 7 days)
+
+API endpoints:
+
+- `POST /api/escrow` – create a hold invoice and return separate buyer and seller tokens
+- `GET /api/escrow/:id` – check status, seller address, amount and QR data
+- `GET /escrow/:id?token=TOKEN` – status page showing payment details and a link to manage the escrow; instruct users to save the URL
+- `GET /escrow/:id/manage?token=TOKEN` – token-protected page. Buyer tokens show release/dispute options; seller tokens show ship/dispute options
+- `POST /api/escrow/:id/ship` – mark goods as shipped, moving escrow to `awaiting_release` (seller token required)
+- `POST /api/escrow/:id/confirm` – release funds to the seller (buyer token required; resolves Lightning addresses to BOLT11 invoices via LNURL-Pay)
+- `POST /api/escrow/:id/cancel` – refund the buyer
+- `POST /api/escrow/:id/dispute` – mark an escrow as disputed
+- `POST /api/escrow/:id/resolve` – admin resolution of a dispute
+
+Authentication tokens expire after `ESCROW_TOKEN_TTL` milliseconds (7 days by default). A scheduled job runs hourly to cancel any expired hold invoices, mark those escrows as cancelled and remove their tokens.
+
+Escrow statuses progress from `pending_payment` while waiting for buyer funding, to `awaiting_shipment` after the hold invoice is paid, and finally to `settled`, `cancelled`, or `disputed`.
+
 **LNp2pBot** is being developed on nodejs and connects with an LND node, we wanted that the telegram bot be able to receive lightning payments without being custodial, after some thinking we decided to use hold invoices for it, the bot only settle seller invoices when each party is ok with it and right after that moment the bot pays the buyer's invoice.
 
 ## Creating a sell order

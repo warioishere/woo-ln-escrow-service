@@ -5,6 +5,8 @@ import Community from './community'
 import Dispute from './dispute'
 import Config from './config'
 import Block from './block'
+import Token from './token'
+import Escrow from './escrow'
 
 export {
   User,
@@ -13,5 +15,7 @@ export {
   Community,
   Dispute,
   Config,
-  Block
+  Block,
+  Token,
+  Escrow
 };
