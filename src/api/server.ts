@@ -58,6 +58,24 @@ app.get('/escrow/:id', async (req, res) => {
   }</body></html>`);
 });
 
+app.get('/escrow/:id/manage', async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  if (!token) return res.status(400).send('Token required');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const record = await Token.findOne({ escrowId: req.params.id, tokenHash });
+  if (!record || record.expiresAt.getTime() < Date.now()) {
+    return res.status(403).send('Invalid token');
+  }
+  const escrow = await Escrow.findOne({ hash: req.params.id }).lean();
+  if (!escrow) return res.status(404).send('Escrow not found');
+  const host = `${req.protocol}://${req.get('host')}`;
+  const manageUrl = `${host}/escrow/${escrow.hash}/manage?token=${token}`;
+  const qr = imageCache.getInvoiceQR(escrow.hash);
+  res.send(`<!DOCTYPE html><html><head><title>Manage Escrow ${escrow.hash}</title></head><body><h1>Manage Escrow ${escrow.hash}</h1><p><strong>Save this link</strong> to manage your escrow later: <a href="${manageUrl}">${manageUrl}</a></p><p>Status: ${escrow.status}</p><p>Amount: ${escrow.amount} sats</p><p>Seller: ${escrow.sellerAddress}</p>${
+    qr ? `<img src="${qr}" alt="invoice QR" />` : ''
+  }<div><button onclick="release()">Release Funds</button><button onclick="dispute()">Raise Dispute</button></div><script>function post(path,data){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json());}function release(){post('/api/escrow/${escrow.hash}/confirm',{token:'${token}'}).then(r=>alert(JSON.stringify(r))).catch(()=>alert('error'));}function dispute(){var reason=prompt('Reason for dispute?');if(!reason)return;post('/api/escrow/${escrow.hash}/dispute',{token:'${token}',reason}).then(r=>alert(JSON.stringify(r))).catch(()=>alert('error'));}</script></body></html>`);
+});
+
 // Create a new hold invoice for a WooCommerce order
 app.post('/api/escrow', async (req, res) => {
   try {

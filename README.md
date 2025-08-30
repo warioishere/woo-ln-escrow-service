@@ -25,6 +25,7 @@ API endpoints:
 
 - `POST /api/escrow` – create a hold invoice
 - `GET /api/escrow/:id` – check status, seller address, amount and QR data
+- `GET /escrow/:id/manage?token=TOKEN` – token-protected page to release or dispute an escrow
 - `POST /api/escrow/:id/confirm` – release funds to the seller
 - `POST /api/escrow/:id/cancel` – refund the buyer
 - `POST /api/escrow/:id/dispute` – mark an escrow as disputed
