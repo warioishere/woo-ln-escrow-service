@@ -9,6 +9,7 @@ export interface IEscrow extends Document {
   status:
     | 'pending_payment'
     | 'awaiting_shipment'
+    | 'awaiting_release'
     | 'settled'
     | 'cancelled'
     | 'disputed';
@@ -36,7 +37,7 @@ const escrowSchema = new Schema<IEscrow>({
   },
   status: {
     type: String,
-    enum: ['pending_payment', 'awaiting_shipment', 'settled', 'cancelled', 'disputed'],
+    enum: ['pending_payment', 'awaiting_shipment', 'awaiting_release', 'settled', 'cancelled', 'disputed'],
     default: 'pending_payment',
   },
 }, { timestamps: true });

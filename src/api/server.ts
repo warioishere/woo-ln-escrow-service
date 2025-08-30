@@ -158,6 +158,33 @@ app.get('/api/escrow/:id', async (req, res) => {
   }
 });
 
+// Mark an escrow as shipped, moving it to awaiting release
+app.post('/api/escrow/:id/ship', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'token required' });
+    }
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const record = await Token.findOne({ escrowId: req.params.id, tokenHash });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(403).json({ error: 'invalid token' });
+    }
+    const escrow = await Escrow.findOne({ hash: req.params.id });
+    if (!escrow) {
+      return res.status(404).json({ error: 'unknown escrow' });
+    }
+    if (escrow.status !== 'awaiting_shipment') {
+      return res.status(400).json({ error: 'invalid state' });
+    }
+    escrow.status = 'awaiting_release';
+    await escrow.save();
+    res.json({ status: 'awaiting_release' });
+  } catch (err) {
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
 // Settle a previously created hold invoice
 app.post('/api/escrow/:id/confirm', async (req, res) => {
   try {
@@ -174,7 +201,7 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
     if (!escrow || !escrow.secret) {
       return res.status(404).json({ error: 'unknown escrow' });
     }
-    if (escrow.status !== 'awaiting_shipment') {
+    if (escrow.status !== 'awaiting_release') {
       return res.status(400).json({ error: 'invalid state' });
     }
 

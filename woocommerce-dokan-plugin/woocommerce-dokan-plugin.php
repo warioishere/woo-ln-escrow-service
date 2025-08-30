@@ -88,8 +88,8 @@ class Woo_LN_Escrow_Plugin {
     }
 
     private function render_escrow_orders_page() {
-        if ( isset( $_POST['confirm_escrow'], $_POST['order_id'] ) ) {
-            $this->process_confirm( intval( $_POST['order_id'] ) );
+        if ( isset( $_POST['ship_escrow'], $_POST['order_id'] ) ) {
+            $this->process_ship( intval( $_POST['order_id'] ) );
         } elseif ( isset( $_POST['dispute_escrow'], $_POST['order_id'] ) ) {
             $reason = isset( $_POST['reason'] ) ? sanitize_text_field( $_POST['reason'] ) : '';
             $this->process_dispute( intval( $_POST['order_id'] ), $reason );
@@ -124,7 +124,7 @@ class Woo_LN_Escrow_Plugin {
                 echo '<tr><td>#' . esc_html( $order_id ) . '</td><td>' . esc_html( $status ) . '</td><td>';
                 if ( 'awaiting_shipment' === $status ) {
                     echo '<form method="post" style="display:inline"><input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
-                    submit_button( __( 'Mark Shipped', 'woo-ln-escrow' ), 'primary', 'confirm_escrow', false );
+                    submit_button( __( 'Mark Shipped', 'woo-ln-escrow' ), 'primary', 'ship_escrow', false );
                     echo '</form> ';
                 }
                 echo '<form method="post" style="display:inline"><input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
@@ -153,6 +153,23 @@ class Woo_LN_Escrow_Plugin {
         ) );
         if ( ! is_wp_error( $response ) ) {
             update_post_meta( $order_id, self::META_STATUS, 'settled' );
+        }
+    }
+
+    private function process_ship( $order_id ) {
+        $escrow_id = get_post_meta( $order_id, self::META_ESCROW_ID, true );
+        $token     = get_post_meta( $order_id, self::META_TOKEN, true );
+        $api_url   = get_option( self::OPTION_API_URL );
+        if ( ! $escrow_id || ! $token || ! $api_url ) {
+            return;
+        }
+        $response = wp_remote_post( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id . '/ship', array(
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'body'    => wp_json_encode( array( 'token' => $token ) ),
+            'timeout' => 45,
+        ) );
+        if ( ! is_wp_error( $response ) ) {
+            update_post_meta( $order_id, self::META_STATUS, 'awaiting_release' );
         }
     }
 
