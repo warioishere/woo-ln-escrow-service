@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import crypto from 'crypto';
 import { createHoldInvoice, settleHoldInvoice, cancelHoldInvoice, payRequest } from '../../ln';
 import Token from '../../models/token';
-import Escrow from '../../models/escrow';
+import Escrow, { IEscrow } from '../../models/escrow';
 import { logger } from '../../logger';
 import { connect } from '../../db_connect';
 import { imageCache } from '../../util/imageCache';
@@ -59,6 +59,35 @@ app.post('/api/escrow', async (req, res) => {
     }
 
     res.json({ hash, request, qr, token });
+  } catch (err) {
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// Retrieve escrow status
+app.get('/api/escrow/:id', async (req, res) => {
+  try {
+    const escrow = await Escrow.findOne({ hash: req.params.id }).lean<IEscrow>();
+    if (!escrow) {
+      return res.status(404).json({ error: 'unknown escrow' });
+    }
+    const response: {
+      hash: string;
+      status: IEscrow['status'];
+      amount: number;
+      sellerAddress: string;
+      qr?: string;
+    } = {
+      hash: escrow.hash,
+      status: escrow.status,
+      amount: escrow.amount,
+      sellerAddress: escrow.sellerAddress,
+    };
+    if (escrow.status === 'pending') {
+      const qr = imageCache.getInvoiceQR(escrow.hash);
+      if (qr) response.qr = qr;
+    }
+    res.json(response);
   } catch (err) {
     res.status(500).json({ error: 'internal error' });
   }

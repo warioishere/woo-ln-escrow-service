@@ -100,10 +100,31 @@ class Woo_LN_Escrow_Plugin {
     }
 
     public function display_qr_on_thankyou( $order_id ) {
-        $qr = get_post_meta( $order_id, self::META_QR, true );
-        if ( $qr ) {
+        $qr         = get_post_meta( $order_id, self::META_QR, true );
+        $escrow_id  = get_post_meta( $order_id, self::META_ESCROW_ID, true );
+        $api_url    = get_option( self::OPTION_API_URL );
+        if ( $qr && $escrow_id && $api_url ) {
             echo '<h2>' . esc_html__( 'Pay with Lightning', 'woo-ln-escrow' ) . '</h2>';
-            echo '<img src="' . esc_attr( $qr ) . '" alt="Lightning Invoice" />';
+            echo '<img id="woo-ln-escrow-qr" src="' . esc_attr( $qr ) . '" alt="Lightning Invoice" />';
+            echo '<p id="woo-ln-escrow-status">' . esc_html__( 'Status: pending', 'woo-ln-escrow' ) . '</p>';
+            $endpoint = esc_url_raw( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id );
+            echo '<script>
+            (function(){
+                var s=document.getElementById("woo-ln-escrow-status");
+                var img=document.getElementById("woo-ln-escrow-qr");
+                async function poll(){
+                    try{
+                        const r=await fetch("' . esc_js( $endpoint ) . '");
+                        if(!r.ok) return;
+                        const d=await r.json();
+                        s.textContent="Status: "+d.status;
+                        if(d.status!=="pending"){ if(img) img.style.display="none"; clearInterval(i); }
+                    }catch(e){}
+                }
+                var i=setInterval(poll,5000);
+                poll();
+            })();
+            </script>';
         }
     }
 
@@ -144,6 +165,13 @@ class Woo_LN_Escrow_Plugin {
                     } else {
                         update_post_meta( $order_id, self::META_STATUS, 'settled' );
                         echo '<div class="updated"><p>' . esc_html__( 'Escrow released.', 'woo-ln-escrow' ) . '</p></div>';
+                    }
+                }
+                $status_resp = wp_remote_get( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id );
+                if ( ! is_wp_error( $status_resp ) ) {
+                    $status_data = json_decode( wp_remote_retrieve_body( $status_resp ), true );
+                    if ( $status_data && isset( $status_data['status'] ) ) {
+                        update_post_meta( $order_id, self::META_STATUS, sanitize_text_field( $status_data['status'] ) );
                     }
                 }
             } else {
