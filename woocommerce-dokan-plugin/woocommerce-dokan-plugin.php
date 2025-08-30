@@ -23,7 +23,8 @@ class Woo_LN_Escrow_Plugin {
         add_action( 'admin_init', array( $this, 'register_settings' ) );
         add_filter( 'dokan_seller_meta_fields', array( $this, 'add_vendor_lightning_field' ) );
         add_action( 'dokan_process_seller_meta_fields', array( $this, 'save_vendor_lightning_field' ), 10, 2 );
-        add_action( 'admin_menu', array( $this, 'add_release_page' ) );
+        add_filter( 'dokan_get_dashboard_nav', array( $this, 'add_escrow_nav' ) );
+        add_action( 'dokan_load_custom_template', array( $this, 'load_escrow_template' ) );
         add_filter( 'woocommerce_my_account_my_orders_actions', array( $this, 'add_view_escrow_action' ), 10, 2 );
     }
 
@@ -63,6 +64,95 @@ class Woo_LN_Escrow_Plugin {
     public function save_vendor_lightning_field( $store_id, $dokan_settings ) {
         if ( isset( $_POST[ self::META_LIGHTNING_ADDRESS ] ) ) {
             update_user_meta( $store_id, self::META_LIGHTNING_ADDRESS, sanitize_text_field( $_POST[ self::META_LIGHTNING_ADDRESS ] ) );
+        }
+    }
+
+    public function add_escrow_nav( $urls ) {
+        $urls['escrow-orders'] = array(
+            'title' => __( 'Escrow Orders', 'woo-ln-escrow' ),
+            'icon'  => '<i class="dashicons dashicons-lock"></i>',
+            'url'   => dokan_get_navigation_url( 'escrow-orders' ),
+            'pos'   => 55,
+        );
+        return $urls;
+    }
+
+    public function load_escrow_template( $query ) {
+        if ( isset( $query->query_vars['escrow-orders'] ) ) {
+            $this->render_escrow_orders_page();
+            exit;
+        }
+    }
+
+    private function render_escrow_orders_page() {
+        if ( isset( $_POST['confirm_escrow'], $_POST['order_id'] ) ) {
+            $this->process_confirm( intval( $_POST['order_id'] ) );
+        } elseif ( isset( $_POST['dispute_escrow'], $_POST['order_id'] ) ) {
+            $reason = isset( $_POST['reason'] ) ? sanitize_text_field( $_POST['reason'] ) : '';
+            $this->process_dispute( intval( $_POST['order_id'] ), $reason );
+        }
+
+        $orders = wc_get_orders( array(
+            'limit'      => -1,
+            'meta_query' => array(
+                array( 'key' => '_dokan_vendor_id', 'value' => get_current_user_id() ),
+                array( 'key' => self::META_ESCROW_ID, 'compare' => 'EXISTS' ),
+            ),
+        ) );
+
+        echo '<h2>' . esc_html__( 'Escrow Orders', 'woo-ln-escrow' ) . '</h2>';
+        echo '<table class="widefat"><thead><tr><th>' . esc_html__( 'Order', 'woo-ln-escrow' ) . '</th><th>' . esc_html__( 'Status', 'woo-ln-escrow' ) . '</th><th>' . esc_html__( 'Actions', 'woo-ln-escrow' ) . '</th></tr></thead><tbody>';
+        if ( $orders ) {
+            foreach ( $orders as $order ) {
+                $order_id = $order->get_id();
+                $status   = get_post_meta( $order_id, self::META_STATUS, true );
+                echo '<tr><td>#' . esc_html( $order_id ) . '</td><td>' . esc_html( $status ) . '</td><td>';
+                echo '<form method="post" style="display:inline"><input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
+                submit_button( __( 'Mark Shipped', 'woo-ln-escrow' ), 'primary', 'confirm_escrow', false );
+                echo '</form> ';
+                echo '<form method="post" style="display:inline"><input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
+                echo '<input type="text" name="reason" placeholder="' . esc_attr__( 'Reason', 'woo-ln-escrow' ) . '" />';
+                submit_button( __( 'Raise Dispute', 'woo-ln-escrow' ), 'secondary', 'dispute_escrow', false );
+                echo '</form>';
+                echo '</td></tr>';
+            }
+        } else {
+            echo '<tr><td colspan="3">' . esc_html__( 'No escrow orders.', 'woo-ln-escrow' ) . '</td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+
+    private function process_confirm( $order_id ) {
+        $escrow_id = get_post_meta( $order_id, self::META_ESCROW_ID, true );
+        $token     = get_post_meta( $order_id, self::META_TOKEN, true );
+        $api_url   = get_option( self::OPTION_API_URL );
+        if ( ! $escrow_id || ! $token || ! $api_url ) {
+            return;
+        }
+        $response = wp_remote_post( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id . '/confirm', array(
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'body'    => wp_json_encode( array( 'token' => $token ) ),
+            'timeout' => 45,
+        ) );
+        if ( ! is_wp_error( $response ) ) {
+            update_post_meta( $order_id, self::META_STATUS, 'settled' );
+        }
+    }
+
+    private function process_dispute( $order_id, $reason ) {
+        $escrow_id = get_post_meta( $order_id, self::META_ESCROW_ID, true );
+        $token     = get_post_meta( $order_id, self::META_TOKEN, true );
+        $api_url   = get_option( self::OPTION_API_URL );
+        if ( ! $escrow_id || ! $token || ! $api_url ) {
+            return;
+        }
+        $response = wp_remote_post( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id . '/dispute', array(
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'body'    => wp_json_encode( array( 'token' => $token, 'reason' => $reason ) ),
+            'timeout' => 45,
+        ) );
+        if ( ! is_wp_error( $response ) ) {
+            update_post_meta( $order_id, self::META_STATUS, 'disputed' );
         }
     }
 
@@ -144,70 +234,6 @@ class Woo_LN_Escrow_Plugin {
         }
     }
 
-    public function add_release_page() {
-        add_menu_page( 'Escrow Release', 'Escrow Release', 'read', 'woo-ln-escrow-release', array( $this, 'render_release_page' ) );
-    }
-
-    public function render_release_page() {
-        if ( isset( $_POST['order_id'] ) ) {
-            $order_id   = intval( $_POST['order_id'] );
-            $escrow_id  = get_post_meta( $order_id, self::META_ESCROW_ID, true );
-            $token      = get_post_meta( $order_id, self::META_TOKEN, true );
-            $order      = wc_get_order( $order_id );
-            $seller_id  = $order ? $order->get_meta( '_dokan_vendor_id' ) : 0;
-            $api_url    = get_option( self::OPTION_API_URL );
-            if ( $order && $escrow_id && $token && $api_url && get_current_user_id() === intval( $seller_id ) ) {
-                if ( isset( $_POST['raise_dispute'] ) ) {
-                    $reason   = isset( $_POST['reason'] ) ? sanitize_text_field( $_POST['reason'] ) : '';
-                    $response = wp_remote_post( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id . '/dispute', array(
-                        'headers' => array( 'Content-Type' => 'application/json' ),
-                        'body'    => wp_json_encode( array( 'token' => $token, 'reason' => $reason ) ),
-                        'timeout' => 45,
-                    ) );
-                    if ( is_wp_error( $response ) ) {
-                        echo '<div class="error"><p>' . esc_html__( 'Failed to raise dispute.', 'woo-ln-escrow' ) . '</p></div>';
-                    } else {
-                        update_post_meta( $order_id, self::META_STATUS, 'disputed' );
-                        echo '<div class="updated"><p>' . esc_html__( 'Dispute raised.', 'woo-ln-escrow' ) . '</p></div>';
-                    }
-                } else {
-                    $response = wp_remote_post( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id . '/confirm', array(
-                        'headers' => array( 'Content-Type' => 'application/json' ),
-                        'body'    => wp_json_encode( array( 'token' => $token ) ),
-                        'timeout' => 45,
-                    ) );
-                    if ( is_wp_error( $response ) ) {
-                        echo '<div class="error"><p>' . esc_html__( 'Failed to release escrow.', 'woo-ln-escrow' ) . '</p></div>';
-                    } else {
-                        update_post_meta( $order_id, self::META_STATUS, 'settled' );
-                        echo '<div class="updated"><p>' . esc_html__( 'Escrow released.', 'woo-ln-escrow' ) . '</p></div>';
-                    }
-                }
-                $status_resp = wp_remote_get( trailingslashit( $api_url ) . 'api/escrow/' . $escrow_id );
-                if ( ! is_wp_error( $status_resp ) ) {
-                    $status_data = json_decode( wp_remote_retrieve_body( $status_resp ), true );
-                    if ( $status_data && isset( $status_data['status'] ) ) {
-                        update_post_meta( $order_id, self::META_STATUS, sanitize_text_field( $status_data['status'] ) );
-                    }
-                }
-            } else {
-                echo '<div class="error"><p>' . esc_html__( 'Invalid order or permissions.', 'woo-ln-escrow' ) . '</p></div>';
-            }
-        }
-        $current_status = '';
-        if ( isset( $_POST['order_id'] ) ) {
-            $current_status = get_post_meta( intval( $_POST['order_id'] ), self::META_STATUS, true );
-        }
-        echo '<div class="wrap"><h1>' . esc_html__( 'Escrow Actions', 'woo-ln-escrow' ) . '</h1>';
-        if ( $current_status ) {
-            echo '<p>' . esc_html__( 'Current status:', 'woo-ln-escrow' ) . ' ' . esc_html( $current_status ) . '</p>';
-        }
-        echo '<form method="post"><p><label>' . esc_html__( 'Order ID', 'woo-ln-escrow' ) . '</label> <input type="number" name="order_id" /></p>';
-        echo '<p><label>' . esc_html__( 'Dispute reason', 'woo-ln-escrow' ) . '</label> <input type="text" name="reason" /></p>';
-        submit_button( __( 'Release Payment', 'woo-ln-escrow' ), 'primary', 'release_payment', false );
-        submit_button( __( 'Raise Dispute', 'woo-ln-escrow' ), 'secondary', 'raise_dispute', false );
-        echo '</form></div>';
-    }
 }
 
 class Woo_LN_Escrow_Gateway extends WC_Payment_Gateway {
