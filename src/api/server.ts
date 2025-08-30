@@ -4,8 +4,10 @@ import crypto from 'crypto';
 import { createHoldInvoice, settleHoldInvoice, cancelHoldInvoice } from '../../ln';
 import Token from '../../models/token';
 import { connect } from '../../db_connect';
+import { imageCache } from '../../util/imageCache';
 
 connect();
+imageCache.initialize().catch(() => undefined);
 
 const app = express();
 app.use(express.json());
@@ -34,7 +36,11 @@ app.post('/api/escrow', async (req, res) => {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await Token.create({ escrowId: hash, tokenHash, expiresAt });
 
-    const qr = await QRCode.toDataURL(request);
+    let qr = imageCache.getInvoiceQR(hash);
+    if (!qr) {
+      qr = await QRCode.toDataURL(request);
+      imageCache.storeInvoiceQR(hash, qr);
+    }
 
     res.json({ hash, request, qr, token });
   } catch (err) {
@@ -62,6 +68,7 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
 
     await settleHoldInvoice({ secret });
     secrets.delete(req.params.id);
+    imageCache.removeInvoiceQR(req.params.id);
     await record.deleteOne();
     res.json({ status: 'settled' });
   } catch (err) {
@@ -84,6 +91,7 @@ app.post('/api/escrow/:id/cancel', async (req, res) => {
 
     await cancelHoldInvoice({ hash: req.params.id });
     secrets.delete(req.params.id);
+    imageCache.removeInvoiceQR(req.params.id);
     await record.deleteOne();
     res.json({ status: 'cancelled' });
   } catch (err) {
