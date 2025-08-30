@@ -23,8 +23,6 @@ class Woo_LN_Escrow_Plugin {
         add_action( 'admin_init', array( $this, 'register_settings' ) );
         add_filter( 'dokan_seller_meta_fields', array( $this, 'add_vendor_lightning_field' ) );
         add_action( 'dokan_process_seller_meta_fields', array( $this, 'save_vendor_lightning_field' ), 10, 2 );
-        add_action( 'woocommerce_checkout_order_processed', array( $this, 'create_escrow_invoice' ), 10, 3 );
-        add_action( 'woocommerce_thankyou', array( $this, 'display_qr_on_thankyou' ) );
         add_action( 'admin_menu', array( $this, 'add_release_page' ) );
     }
 
@@ -193,6 +191,107 @@ class Woo_LN_Escrow_Plugin {
         echo '</form></div>';
     }
 }
+
+class Woo_LN_Escrow_Gateway extends WC_Payment_Gateway {
+    public function __construct() {
+        $this->id                 = 'woo_ln_escrow';
+        $this->method_title       = __( 'Lightning Escrow', 'woo-ln-escrow' );
+        $this->method_description = __( 'Pay using a Lightning Network escrow.', 'woo-ln-escrow' );
+        $this->has_fields         = false;
+        $this->supports           = array( 'products' );
+
+        $this->init_form_fields();
+        $this->init_settings();
+
+        $this->title       = $this->get_option( 'title', __( 'Lightning Escrow', 'woo-ln-escrow' ) );
+        $this->description = $this->get_option( 'description', __( 'Pay with Lightning held in escrow.', 'woo-ln-escrow' ) );
+
+        add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
+    }
+
+    public function init_form_fields() {
+        $this->form_fields = array(
+            'enabled'     => array(
+                'title'   => __( 'Enable/Disable', 'woo-ln-escrow' ),
+                'type'    => 'checkbox',
+                'label'   => __( 'Enable Lightning Escrow', 'woo-ln-escrow' ),
+                'default' => 'yes',
+            ),
+            'title'       => array(
+                'title'       => __( 'Title', 'woo-ln-escrow' ),
+                'type'        => 'text',
+                'description' => __( 'Title shown at checkout.', 'woo-ln-escrow' ),
+                'default'     => __( 'Lightning Escrow', 'woo-ln-escrow' ),
+                'desc_tip'    => true,
+            ),
+            'description' => array(
+                'title'       => __( 'Description', 'woo-ln-escrow' ),
+                'type'        => 'textarea',
+                'description' => __( 'Payment method description.', 'woo-ln-escrow' ),
+                'default'     => __( 'Pay with Lightning; funds held in escrow until release.', 'woo-ln-escrow' ),
+            ),
+        );
+    }
+
+    public function process_payment( $order_id ) {
+        $order = wc_get_order( $order_id );
+
+        $api_url = get_option( Woo_LN_Escrow_Plugin::OPTION_API_URL );
+        $seller_id = $order ? $order->get_meta( '_dokan_vendor_id' ) : 0;
+        $lightning_address = $seller_id ? get_user_meta( $seller_id, Woo_LN_Escrow_Plugin::META_LIGHTNING_ADDRESS, true ) : '';
+
+        if ( ! $api_url || ! $lightning_address ) {
+            wc_add_notice( __( 'Escrow is not configured.', 'woo-ln-escrow' ), 'error' );
+            return;
+        }
+
+        $body = array(
+            'description'   => 'Order #' . $order_id,
+            'amount'        => $order->get_total(),
+            'sellerAddress' => $lightning_address,
+        );
+
+        $response = wp_remote_post( trailingslashit( $api_url ) . 'api/escrow', array(
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'body'    => wp_json_encode( $body ),
+            'timeout' => 45,
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            wc_add_notice( __( 'Failed to create escrow.', 'woo-ln-escrow' ), 'error' );
+            return;
+        }
+
+        $data = json_decode( wp_remote_retrieve_body( $response ), true );
+        if ( ! $data || empty( $data['hash'] ) || empty( $data['token'] ) ) {
+            wc_add_notice( __( 'Invalid escrow response.', 'woo-ln-escrow' ), 'error' );
+            return;
+        }
+
+        update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_ESCROW_ID, sanitize_text_field( $data['hash'] ) );
+        update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_TOKEN, sanitize_text_field( $data['token'] ) );
+        update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_STATUS, 'pending' );
+        if ( isset( $data['qr'] ) ) {
+            update_post_meta( $order_id, Woo_LN_Escrow_Plugin::META_QR, $data['qr'] );
+        }
+
+        $redirect = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $data['hash'] );
+        if ( ! empty( $data['token'] ) ) {
+            $redirect .= '?token=' . rawurlencode( $data['token'] );
+        }
+
+        return array(
+            'result'   => 'success',
+            'redirect' => $redirect,
+        );
+    }
+}
+
+function woo_ln_escrow_add_gateway_class( $gateways ) {
+    $gateways[] = 'Woo_LN_Escrow_Gateway';
+    return $gateways;
+}
+add_filter( 'woocommerce_payment_gateways', 'woo_ln_escrow_add_gateway_class' );
 
 new Woo_LN_Escrow_Plugin();
 
