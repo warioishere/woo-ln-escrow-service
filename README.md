@@ -13,6 +13,13 @@ Wherever you are you can start using the [bot](https://t.me/lnp2pbot), just need
 
 ---
 
+## Escrow web server
+
+The project includes an Express-powered escrow API with a minimal web interface. Configure its network settings with the following environment variables:
+
+- `ESCROW_DOMAIN`: hostname the server binds to (default `0.0.0.0`)
+- `ESCROW_PORT`: port number the server listens on (default `3000`)
+
 **LNp2pBot** is being developed on nodejs and connects with an LND node, we wanted that the telegram bot be able to receive lightning payments without being custodial, after some thinking we decided to use hold invoices for it, the bot only settle seller invoices when each party is ok with it and right after that moment the bot pays the buyer's invoice.
 
 ## Creating a sell order

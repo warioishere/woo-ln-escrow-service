@@ -17,6 +17,23 @@ app.use(express.json());
 // simple in-memory store for invoice secrets
 const secrets = new Map<string, string>();
 
+// basic web views
+app.get('/', async (_req, res) => {
+  const escrows = await Escrow.find().sort({ createdAt: -1 }).lean();
+  res.send(`<!DOCTYPE html><html><head><title>Escrow Orders</title></head><body><h1>Escrow Orders</h1><ul>${escrows
+    .map(e => `<li><a href="/escrow/${e.hash}">${e.description || e.hash}</a> - ${e.status} - ${e.amount} sats</li>`)
+    .join('')}</ul></body></html>`);
+});
+
+app.get('/escrow/:id', async (req, res) => {
+  const escrow = await Escrow.findOne({ hash: req.params.id }).lean();
+  if (!escrow) return res.status(404).send('Escrow not found');
+  const qr = imageCache.getInvoiceQR(escrow.hash);
+  res.send(`<!DOCTYPE html><html><head><title>Escrow ${escrow.hash}</title></head><body><h1>${escrow.description}</h1><p>Status: ${escrow.status}</p><p>Amount: ${escrow.amount} sats</p><p>Seller: ${escrow.sellerAddress}</p>${
+    qr ? `<img src="${qr}" alt="invoice QR" />` : ''
+  }</body></html>`);
+});
+
 // Create a new hold invoice for a WooCommerce order
 app.post('/api/escrow', async (req, res) => {
   try {
@@ -37,7 +54,7 @@ app.post('/api/escrow', async (req, res) => {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await Token.create({ escrowId: hash, tokenHash, expiresAt });
-    await Escrow.create({ hash, sellerAddress, amount });
+    await Escrow.create({ hash, sellerAddress, amount, description });
 
     let qr = imageCache.getInvoiceQR(hash);
     if (!qr) {
@@ -117,7 +134,8 @@ app.post('/api/escrow/:id/cancel', async (req, res) => {
   }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Escrow API listening on port ${port}`));
+const port = Number(process.env.ESCROW_PORT || 3000);
+const domain = process.env.ESCROW_DOMAIN || '0.0.0.0';
+app.listen(port, domain, () => console.log(`Escrow API listening at http://${domain}:${port}`));
 
 export default app;
