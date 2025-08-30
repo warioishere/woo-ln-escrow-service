@@ -16,6 +16,8 @@ imageCache.initialize().catch(() => undefined);
 const app = express();
 app.use(express.json());
 
+const TOKEN_TTL_MS = Number(process.env.ESCROW_TOKEN_TTL) || 7 * 24 * 60 * 60 * 1000;
+
 const cleanupExpiredTokens = async (): Promise<void> => {
   const now = new Date();
   const tokens = await Token.find({ expiresAt: { $lte: now } });
@@ -94,7 +96,7 @@ app.post('/api/escrow', async (req, res) => {
 
     const token = crypto.randomBytes(16).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
     await Token.create({ escrowId: hash, tokenHash, expiresAt });
     await Escrow.create({ hash, sellerAddress, amount, description, secret });
 

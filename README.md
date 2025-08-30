@@ -20,6 +20,7 @@ The project includes an Express-powered escrow API with a minimal web interface.
 - `ESCROW_DOMAIN`: hostname the server binds to (default `0.0.0.0`)
 - `ESCROW_PORT`: port number the server listens on (default `3000`)
 - `ESCROW_ADMIN_TOKEN`: shared secret used to authorize dispute resolution
+- `ESCROW_TOKEN_TTL`: authentication token lifetime in milliseconds (default `604800000` – 7 days)
 
 API endpoints:
 
@@ -31,7 +32,7 @@ API endpoints:
 - `POST /api/escrow/:id/dispute` – mark an escrow as disputed
 - `POST /api/escrow/:id/resolve` – admin resolution of a dispute
 
-Expired authentication tokens are cleaned up automatically each hour. When a token expires, the service cancels the associated hold invoice and marks the escrow as cancelled.
+Authentication tokens expire after `ESCROW_TOKEN_TTL` milliseconds (7 days by default). A scheduled job runs hourly to cancel any expired hold invoices, mark those escrows as cancelled and remove their tokens.
 
 Escrow statuses progress from `pending_payment` while waiting for buyer funding, to `awaiting_shipment` after the hold invoice is paid, and finally to `settled`, `cancelled`, or `disputed`.
 
