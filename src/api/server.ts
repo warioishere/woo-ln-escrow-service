@@ -2,6 +2,7 @@ import express from 'express';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
 import { createHoldInvoice, settleHoldInvoice, cancelHoldInvoice, payRequest, getInvoice } from '../../ln';
+import { resolvLightningAddress } from '../../lnurl/lnurl-pay';
 import Token from '../../models/token';
 import Escrow, { IEscrow } from '../../models/escrow';
 import { logger } from '../../logger';
@@ -158,7 +159,7 @@ app.get('/api/escrow/:id', async (req, res) => {
 // Settle a previously created hold invoice
 app.post('/api/escrow/:id/confirm', async (req, res) => {
   try {
-    const { token } = req.body;
+    const { token, invoice } = req.body;
     if (!token) {
       return res.status(400).json({ error: 'token required' });
     }
@@ -177,7 +178,16 @@ app.post('/api/escrow/:id/confirm', async (req, res) => {
 
     await settleHoldInvoice({ secret: escrow.secret });
 
-    const payment = await payRequest({ request: escrow.sellerAddress, amount: escrow.amount });
+    let payoutRequest = invoice || escrow.sellerAddress;
+    if (!invoice && escrow.sellerAddress.includes('@')) {
+      const lnurl = await resolvLightningAddress(escrow.sellerAddress, escrow.amount * 1000);
+      if (!lnurl || !lnurl.pr) {
+        return res.status(500).json({ error: 'lnurl resolution failed' });
+      }
+      payoutRequest = lnurl.pr;
+    }
+
+    const payment = await payRequest({ request: payoutRequest, amount: escrow.amount });
     if (!payment || (typeof payment === 'object' && 'error' in payment)) {
       return res.status(500).json({ error: 'payment failed' });
     }
