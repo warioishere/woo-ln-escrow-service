@@ -30,6 +30,8 @@ API endpoints:
 - `POST /api/escrow/:id/dispute` – mark an escrow as disputed
 - `POST /api/escrow/:id/resolve` – admin resolution of a dispute
 
+Expired authentication tokens are cleaned up automatically each hour. When a token expires, the service cancels the associated hold invoice and marks the escrow as cancelled.
+
 **LNp2pBot** is being developed on nodejs and connects with an LND node, we wanted that the telegram bot be able to receive lightning payments without being custodial, after some thinking we decided to use hold invoices for it, the bot only settle seller invoices when each party is ok with it and right after that moment the bot pays the buyer's invoice.
 
 ## Creating a sell order

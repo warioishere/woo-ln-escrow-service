@@ -7,12 +7,36 @@ import Escrow, { IEscrow } from '../../models/escrow';
 import { logger } from '../../logger';
 import { connect } from '../../db_connect';
 import { imageCache } from '../../util/imageCache';
+import schedule from 'node-schedule';
 
 connect();
 imageCache.initialize().catch(() => undefined);
 
 const app = express();
 app.use(express.json());
+
+const cleanupExpiredTokens = async (): Promise<void> => {
+  const now = new Date();
+  const tokens = await Token.find({ expiresAt: { $lte: now } });
+  for (const t of tokens) {
+    try {
+      await cancelHoldInvoice({ hash: t.escrowId });
+      const escrow = await Escrow.findOne({ hash: t.escrowId });
+      if (escrow) {
+        escrow.status = 'cancelled';
+        escrow.secret = null;
+        await escrow.save();
+      }
+      imageCache.removeInvoiceQR(t.escrowId);
+      await t.deleteOne();
+      logger.info(`Expired token for escrow ${t.escrowId} cleaned up`);
+    } catch (err) {
+      logger.error(`Failed to cleanup expired token for ${t.escrowId}: ${err}`);
+    }
+  }
+};
+
+schedule.scheduleJob('0 * * * *', cleanupExpiredTokens);
 
 // basic web views
 app.get('/', async (_req, res) => {
