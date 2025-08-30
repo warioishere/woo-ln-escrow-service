@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
 import { connect as mongoConnect } from './db_connect';
-import { resubscribeInvoices } from './ln';
 import { logger } from './logger';
 import { delay } from './util';
 import { imageCache } from './util/imageCache';
@@ -37,7 +36,6 @@ import { createIndexes } from './models/indexes';
       app.listen(port, () => logger.info(`Server listening on port ${port}`));
 
       await delay(1000);
-      await resubscribeInvoices({} as any);
     })
     .on('error', (error: Error) => logger.error(`Error connecting to Mongo: ${error}`));
 })();

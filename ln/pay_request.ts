@@ -4,14 +4,8 @@ import {
   deleteForwardingReputations,
   AuthenticatedLnd,
 } from 'lightning';
-import { User, PendingPayment } from '../models';
 import lnd from './connect';
-import { handleReputationItems, getUserI18nContext } from '../util';
-import * as messages from '../bot/messages';
 import { logger, logTimeout, logOperationDuration } from '../logger';
-import * as OrderEvents from '../bot/modules/events/orders';
-import { IOrder } from '../models/order';
-import { HasTelegram } from '../bot/start';
 
 const { parsePaymentRequest } = require('invoices');
 
@@ -87,86 +81,6 @@ const payRequest = async ({ request, amount }: { request: string, amount: number
   }
 };
 
-const payToBuyer = async (bot: HasTelegram, order: IOrder) => {
-  try {
-    // We check if the payment is on flight we don't do anything
-    const isPending = await isPendingPayment(order.buyer_invoice);
-    if (isPending) {
-      return;
-    }
-    const payment = await payRequest({
-      request: order.buyer_invoice,
-      amount: order.amount,
-    });
-    const buyerUser = await User.findOne({ _id: order.buyer_id });
-    if (buyerUser === null)
-      throw new Error("buyerUser was not found");
-    // If the buyer's invoice is expired we let it know and don't try to pay again
-    const i18nCtx = await getUserI18nContext(buyerUser);
-    if (!!payment && payment.is_expired) {
-      await messages.expiredInvoiceOnPendingMessage(
-        bot,
-        buyerUser,
-        order,
-        i18nCtx
-      );
-      return;
-    }
-    const sellerUser = await User.findOne({ _id: order.seller_id });
-    if (sellerUser === null)
-      throw new Error("sellerUser was not found");
-    if (!!payment && !!payment.confirmed_at) {
-      logger.info(`Order ${order._id} - Invoice with hash: ${payment.id} paid`);
-      order.status = 'SUCCESS';
-      order.routing_fee = payment.fee;
-
-      await order.save();
-      OrderEvents.orderUpdated(order);
-      await handleReputationItems(buyerUser, sellerUser, order.amount);
-      await messages.buyerReceivedSatsMessage(
-        bot,
-        buyerUser,
-        sellerUser,
-        i18nCtx
-      );
-      await messages.rateUserMessage(bot, buyerUser, order, i18nCtx);
-    } else {
-      // Handle different types of payment failures
-      if (payment && typeof payment === 'object' && 'error' in payment) {
-        const errorType = payment.error as string;
-        
-        if (errorType === 'TIMEOUT') {
-          logger.warning(`Payment timeout for order ${order._id}, will retry later`);
-          await messages.invoicePaymentFailedMessage(bot, buyerUser, i18nCtx);
-        } else if (errorType === 'ROUTING_FAILED') {
-          logger.warning(`Routing failed for order ${order._id}, will retry with cleared reputation`);
-          await messages.invoicePaymentFailedMessage(bot, buyerUser, i18nCtx);
-        } else {
-          logger.error(`Payment failed for order ${order._id} with error: ${errorType}`);
-          await messages.invoicePaymentFailedMessage(bot, buyerUser, i18nCtx);
-        }
-      } else {
-        await messages.invoicePaymentFailedMessage(bot, buyerUser, i18nCtx);
-      }
-      
-      // Create pending payment for retry
-      const pp = new PendingPayment({
-        amount: order.amount,
-        payment_request: order.buyer_invoice,
-        user_id: buyerUser._id,
-        description: order.description,
-        hash: order.hash,
-        order_id: order._id,
-        attempts: 1,
-        last_error: payment && typeof payment === 'object' && 'error' in payment ? payment.error as string : 'UNKNOWN',
-      });
-      await pp.save();
-    }
-  } catch (error) {
-    logger.error(`payToBuyer catch: ${error}`);
-  }
-};
-
 const isPendingPayment = async (request: string) => {
   try {
     const { id } = parsePaymentRequest({ request });
@@ -182,6 +96,5 @@ const isPendingPayment = async (request: string) => {
 
 export {
   payRequest,
-  payToBuyer,
   isPendingPayment,
 };
