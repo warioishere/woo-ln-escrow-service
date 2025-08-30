@@ -25,7 +25,8 @@ class Woo_LN_Escrow_Plugin {
         add_action( 'dokan_process_seller_meta_fields', array( $this, 'save_vendor_lightning_field' ), 10, 2 );
         add_filter( 'dokan_get_dashboard_nav', array( $this, 'add_escrow_nav' ) );
         add_action( 'dokan_load_custom_template', array( $this, 'load_escrow_template' ) );
-        add_filter( 'woocommerce_my_account_my_orders_actions', array( $this, 'add_view_escrow_action' ), 10, 2 );
+        add_filter( 'woocommerce_my_account_my_orders_actions', array( $this, 'add_escrow_actions' ), 10, 2 );
+        add_action( 'template_redirect', array( $this, 'maybe_release_escrow' ) );
         add_action( 'wp_ajax_woo_ln_escrow_status', array( $this, 'ajax_update_status' ) );
         add_action( 'wp_ajax_nopriv_woo_ln_escrow_status', array( $this, 'ajax_update_status' ) );
     }
@@ -204,18 +205,30 @@ class Woo_LN_Escrow_Plugin {
         }
     }
 
-    public function add_view_escrow_action( $actions, $order ) {
+    public function add_escrow_actions( $actions, $order ) {
         $escrow_id = get_post_meta( $order->get_id(), self::META_ESCROW_ID, true );
         $token     = get_post_meta( $order->get_id(), self::META_TOKEN, true );
+        $status    = get_post_meta( $order->get_id(), self::META_STATUS, true );
         $api_url   = get_option( self::OPTION_API_URL );
 
         if ( $escrow_id && $token && $api_url ) {
-            $url = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $escrow_id );
-            $url = add_query_arg( 'token', rawurlencode( $token ), $url );
+            $view_url = trailingslashit( $api_url ) . 'escrow/' . rawurlencode( $escrow_id );
+            $view_url = add_query_arg( 'token', rawurlencode( $token ), $view_url );
             $actions['view_escrow'] = array(
-                'url'  => esc_url( $url ),
+                'url'  => esc_url( $view_url ),
                 'name' => __( 'View Escrow', 'woo-ln-escrow' ),
             );
+
+            if ( 'awaiting_release' === $status ) {
+                $release_url = wp_nonce_url(
+                    add_query_arg( 'woo_ln_release', $order->get_id(), wc_get_account_endpoint_url( 'orders' ) ),
+                    'woo_ln_release_' . $order->get_id()
+                );
+                $actions['woo_ln_release'] = array(
+                    'url'  => esc_url( $release_url ),
+                    'name' => __( 'Release Escrow', 'woo-ln-escrow' ),
+                );
+            }
         }
 
         return $actions;
@@ -266,6 +279,17 @@ class Woo_LN_Escrow_Plugin {
         }
         update_post_meta( $order_id, self::META_STATUS, $status );
         wp_send_json_success();
+    }
+
+    public function maybe_release_escrow() {
+        if ( isset( $_GET['woo_ln_release'], $_GET['_wpnonce'] ) ) {
+            $order_id = intval( $_GET['woo_ln_release'] );
+            if ( $order_id && wp_verify_nonce( $_GET['_wpnonce'], 'woo_ln_release_' . $order_id ) ) {
+                $this->process_confirm( $order_id );
+            }
+            wp_safe_redirect( wc_get_account_endpoint_url( 'orders' ) );
+            exit;
+        }
     }
 
 }
